@@ -5,15 +5,18 @@
 set -euo pipefail
 # The sync model may write only here; resolved so a symlinked home still matches.
 BODIES=$(cd "$HOME/.local/state/sp-session-sync/bodies" 2>/dev/null && pwd -P) || BODIES=""
-method="${1:-}"; path="${2:-}"; body="${3:-}"
+[ $# -ge 2 ] && [ $# -le 3 ] || { echo "sp-api: usage: sp-api GET|POST|PATCH /path [body.json]" >&2; exit 2; }
+method="$1"; path="$2"; body="${3:-}"
 case "$method" in GET|POST|PATCH) ;; *) echo "sp-api: method must be GET, POST or PATCH" >&2; exit 2 ;; esac
 [[ "$path" =~ ^/[A-Za-z0-9_./?=\&%:-]*$ && "$path" != *..* ]] || { echo "sp-api: bad path" >&2; exit 2; }
 # Only the calls the sync needs: read tasks and projects, create a task, update a task.
-case "$method $path" in
-  "GET /tasks"|"GET /tasks?"*|"GET /tasks/"*|"GET /projects"|"GET /projects?"*|"POST /tasks"|"PATCH /tasks/"*) ;;
-  *) echo "sp-api: $method $path is not allowed" >&2; exit 2 ;;
-esac
-case "$path" in /tasks/*/*) echo "sp-api: $path is not allowed" >&2; exit 2 ;; esac
+# Strict shapes, with no %-encoding, so nothing the server decodes can reach another route.
+id='[A-Za-z0-9_-]+'; query='(\?[A-Za-z0-9_=&-]*)?'
+case "$method" in
+  GET) [[ "$path" =~ ^/(tasks|projects)$query$ || "$path" =~ ^/tasks/$id$query$ ]] ;;
+  POST) [[ "$path" == /tasks ]] ;;
+  PATCH) [[ "$path" =~ ^/tasks/$id$ ]] ;;
+esac || { echo "sp-api: $method $path is not allowed" >&2; exit 2; }
 
 # The token file of the default profile, unless SP_TOKEN_FILE names another one (for
 # example a second profile started with --user-data-dir). sp-session-sync.sh exports it.

@@ -126,6 +126,8 @@ bash tests/e2e-test.sh                                           # full run agai
 - The model can write only to `~/.local/state/sp-session-sync/bodies/`, not to the queue, the state or the lock, so a prompt hidden in a session can't redirect what gets synced next.
 - `sp-api` sends only plain files from that folder (no symlinks). It keeps the API token out of the process list (header file, mode 0600) and bypasses proxies for `127.0.0.1`, as the [Local REST API docs](https://github.com/super-productivity/super-productivity/blob/master/docs/wiki/3.01-API.md) recommend.
 - No sync runs without a fresh backup of every task and a valid answer from the API; a wrong token stops it before any model call.
+- `sp-api` takes exactly a method, a path and an optional body, and allows only fixed path shapes (no `%`-encoding).
+- The pass is limited by Claude Code's permission rules, not by an OS sandbox. If you want a hard boundary, run the worker inside one (for example bubblewrap with a read-only home except `~/.local/state/sp-session-sync/bodies`).
 - A sync never runs inside another sync (`SP_SESSION_SYNC=1`), and one lock ensures that only one worker runs at a time.
 
 ## Limits

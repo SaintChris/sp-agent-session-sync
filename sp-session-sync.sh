@@ -218,8 +218,11 @@ worker() {
   # One worker at a time. The lock lives in the per-user runtime folder, which a reboot
   # clears, so a PID left by a crash can't match an unrelated process later. It holds the
   # worker's PID so a dead worker's lock is reclaimed.
-  lock="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/sp-session-sync-$(id -u).lock"
+  # Without a per-user runtime folder it stays in $WORK rather than a shared /tmp.
+  lock="${XDG_RUNTIME_DIR:-${TMPDIR:-$WORK}}/sp-session-sync-$(id -u).lock"
   until mkdir "$lock" 2>/dev/null; do
+    # Never trust a lock someone else created.
+    if [ -e "$lock" ] && [ ! -O "$lock" ]; then log "lock $lock belongs to another user; not syncing"; return 0; fi
     pid=$(cat "$lock/pid" 2>/dev/null)
     if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -rf "$lock"; continue; fi
     # Another live worker will pick up this session from the queue.

@@ -92,6 +92,15 @@ SP_PORT=$port SP_TOKEN_FILE="$tmp/token" "$repo/sp-api" PATCH /tasks/t1 "$state/
 expect "sp-api refuses a symlinked body" "$?" "2"
 SP_PORT=$port SP_TOKEN_FILE="$tmp/token" "$repo/sp-api" DELETE /tasks/t1 >/dev/null 2>&1
 expect "sp-api refuses DELETE" "$?" "2"
+for bad in "GET /tasks/t1%2Ftime" "GET /tasks/t1/time" "PATCH /tasks/t1?x=1" "POST /tasks/t1/archive" "GET /status" "PATCH /projects/p1"; do
+  # shellcheck disable=SC2086
+  SP_PORT=$port SP_TOKEN_FILE="$tmp/token" "$repo/sp-api" $bad >/dev/null 2>&1
+  expect "sp-api refuses $bad" "$?" "2"
+done
+SP_PORT=$port SP_TOKEN_FILE="$tmp/token" "$repo/sp-api" GET /tasks extra-arg more-args >/dev/null 2>&1
+expect "sp-api refuses extra arguments" "$?" "2"
+SP_PORT=$port SP_TOKEN_FILE="$tmp/token" "$repo/sp-api" GET '/tasks?source=all&includeDone=true' >/dev/null 2>&1
+expect "sp-api allows listing all tasks" "$?" "0"
 
 # 4. A failing pass is retried, then set aside after SYNC_MAX_ATTEMPTS (2 here).
 echo '{"type":"user","entrypoint":"cli","message":{"role":"user","content":"and add a test"}}' >> "$session"
