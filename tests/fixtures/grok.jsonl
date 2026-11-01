@@ -1,0 +1,8 @@
+{"type":"system","content":"You are a CLI assistant."}
+{"type":"user","content":[{"type":"text","text":"<user_info>\nOS: linux\n</user_info>"}]}
+{"type":"user","prompt_index":0,"content":[{"type":"text","text":"<user_query>\nrename the config loader\n</user_query>"}]}
+{"type":"user","synthetic_reason":"reminder","content":[{"type":"text","text":"<system-reminder>skills</system-reminder>"}]}
+{"type":"assistant","content":"Renaming it now.","tool_calls":[{"id":"g1"},{"id":"g2"}]}
+{"type":"tool_result","tool_call_id":"g1","content":"ok"}
+{"type":"assistant","content":"Renamed and updated 4 imports."}
+{"type":"user","prompt_index":1,"content":[{"type":"text","text":"<user_query>\nnow add a test"}]}

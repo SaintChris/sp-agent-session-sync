@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync idle coding-agent sessions into Super Productivity
+
+[Service]
+Type=oneshot
+# Adjust the path if you installed the scripts somewhere else. PATH must reach claude, jq,
+# curl and sqlite3 (sqlite3 only matters for T3 Code).
+ExecStart=/bin/bash %h/.local/share/sp-session-sync/sp-session-sync.sh --sweep
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+Nice=15

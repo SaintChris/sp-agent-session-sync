@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync idle coding-agent sessions into Super Productivity every 30 minutes
+
+[Timer]
+# Wall-clock schedule, so a sweep missed while the computer slept runs on wake.
+OnCalendar=*:0/30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

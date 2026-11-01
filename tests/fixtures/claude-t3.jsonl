@@ -1,0 +1,5 @@
+{"type":"user","entrypoint":"sdk-ts","cwd":"/home/me/app","sessionId":"aaaaaaaa-0000-4000-8000-000000000001","message":{"role":"user","content":"add a retry to the uploader"}}
+{"type":"user","entrypoint":"sdk-ts","isMeta":true,"message":{"role":"user","content":"<system-reminder>internal note</system-reminder>"}}
+{"type":"assistant","entrypoint":"sdk-ts","message":{"role":"assistant","content":[{"type":"text","text":"I'll add a retry with backoff."},{"type":"tool_use","id":"t1","name":"Edit","input":{}}]}}
+{"type":"user","entrypoint":"sdk-ts","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
+{"type":"assistant","entrypoint":"sdk-ts","message":{"role":"assistant","content":[{"type":"text","text":"Done: uploads retry 3 times."}]}}

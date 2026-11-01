@@ -1,0 +1,45 @@
+#!/bin/bash
+# Narrow Super Productivity Local REST API client for the sync pass: localhost only,
+# GET/POST/PATCH only (no DELETE), request bodies only from the sync work folder.
+# Usage: sp-api GET|POST|PATCH /path [body.json]
+set -euo pipefail
+# The sync model may write only here; resolved so a symlinked home still matches.
+BODIES=$(cd "$HOME/.local/state/sp-session-sync/bodies" 2>/dev/null && pwd -P) || BODIES=""
+method="${1:-}"; path="${2:-}"; body="${3:-}"
+case "$method" in GET|POST|PATCH) ;; *) echo "sp-api: method must be GET, POST or PATCH" >&2; exit 2 ;; esac
+[[ "$path" =~ ^/[A-Za-z0-9_./?=\&%:-]*$ && "$path" != *..* ]] || { echo "sp-api: bad path" >&2; exit 2; }
+# Only the calls the sync needs: read tasks and projects, create a task, update a task.
+case "$method $path" in
+  "GET /tasks"|"GET /tasks?"*|"GET /tasks/"*|"GET /projects"|"GET /projects?"*|"POST /tasks"|"PATCH /tasks/"*) ;;
+  *) echo "sp-api: $method $path is not allowed" >&2; exit 2 ;;
+esac
+case "$path" in /tasks/*/*) echo "sp-api: $path is not allowed" >&2; exit 2 ;; esac
+
+# The token file of the default profile, unless SP_TOKEN_FILE names another one (for
+# example a second profile started with --user-data-dir). sp-session-sync.sh exports it.
+if [ -z "${SP_TOKEN_FILE:-}" ]; then
+  if [ "$(uname)" = Darwin ]; then
+    SP_TOKEN_FILE="$HOME/Library/Application Support/superProductivity/local-rest-api-token"
+  else
+    SP_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/superProductivity/local-rest-api-token"
+  fi
+fi
+port="${SP_PORT:-3876}"
+[ -r "$SP_TOKEN_FILE" ] || { echo "sp-api: no token file at $SP_TOKEN_FILE (turn the Local REST API on in Settings > Misc)" >&2; exit 2; }
+
+# Keep the token out of the process table: curl reads the header from a 0600 file.
+header=$(umask 077; mktemp)
+trap 'rm -f "$header"' EXIT
+printf 'Authorization: Bearer %s\n' "$(tr -d '\r\n' < "$SP_TOKEN_FILE")" > "$header"
+
+# --noproxy: curl honours proxy variables even for 127.0.0.1, which would send the token on.
+args=(-sS -m 20 --noproxy 127.0.0.1 -X "$method" -H "@$header" -H "Content-Type: application/json")
+if [ -n "$body" ]; then
+  # A plain file in the bodies folder, not a symlink (curl would follow it anywhere).
+  real=$(cd "$(dirname "$body")" 2>/dev/null && pwd -P)/$(basename "$body")
+  [[ -n "$BODIES" && "$real" == "$BODIES"/* && -f "$real" && ! -L "$real" ]] \
+    || { echo "sp-api: body file must be a plain file inside ~/.local/state/sp-session-sync/bodies" >&2; exit 2; }
+  args+=(--data-binary "@$real")
+fi
+curl "${args[@]}" "http://127.0.0.1:$port$path"
+echo
