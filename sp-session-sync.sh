@@ -38,9 +38,9 @@ SYNC_PROMPT_EXTRA=""    # extra instructions appended to the sync prompt
 export SP_PORT SP_TOKEN_FILE
 QUEUE="$WORK/queue"     # <job>.json: session waiting to be synced
 STATE="$WORK/state"     # <job>.lines: session lines already synced
-DONE="$WORK/done"
+DONE="$WORK/done"       # digests and task backups of finished syncs
 BODIES="$WORK/bodies"   # the only folder the sync model may write to (request bodies)
-FAILED="$WORK/failed"   # sessions that failed SYNC_MAX_ATTEMPTS times       # digests and task backups of finished syncs
+FAILED="$WORK/failed"   # sessions that failed SYNC_MAX_ATTEMPTS times
 mkdir -p "$QUEUE" "$STATE" "$DONE" "$BODIES" "$FAILED" "$(dirname "$LOG")"
 
 CLAUDE_DIR="$HOME/.claude/projects"
@@ -171,6 +171,9 @@ if [ "${1:-}" = "--sweep" ]; then
     local job cwd lines n sum; job=$(job_name "$1" "$2")
     # Already queued (for example by the exit hook, with its real end reason).
     [ -f "$QUEUE/$job.json" ] && return 0
+    # Set aside after repeated failures: only moving it back to the queue retries it, so a
+    # session that keeps failing doesn't cost a model run every 30 minutes.
+    [ -f "$FAILED/$job.json" ] && return 0
     # New lines, or the file was rewritten (fewer lines, or a different last synced line).
     lines=$(wc -l < "$3" | tr -d ' '); n=$(synced_lines "$job"); sum=$(synced_sum "$job")
     if [ "$lines" -eq "$n" ]; then
@@ -274,7 +277,7 @@ worker() {
     why=$(skip_reason "$src" "$sid" "$transcript")
     case "$why" in
       RETRY:*) log "$name: ${why#RETRY: }; left queued for the next sweep"; deferred+="$name "; continue ;;
-      ?*) log "$name: $why, skipped"; save_state "$name" "$transcript" "$to"; rm -f "$job"; continue ;;
+      ?*) log "$name: $why, skipped"; save_state "$name" "$transcript" "$to"; rm -f "$job" "$FAILED/$name.json"; continue ;;
     esac
 
     digest="$DONE/$name-$to.md"
@@ -283,7 +286,7 @@ worker() {
     tools=$(count_tools "$src" "$transcript" "$from" "$to")
     if [ "$prompts" -eq 0 ] || { [ "$prompts" -lt 2 ] && [ "${tools:-0}" -eq 0 ]; }; then
       log "$name: $prompts prompt(s), ${tools:-0} tool call(s), nothing to track, skipped"
-      save_state "$name" "$transcript" "$to"; rm -f "$job" "$digest"; continue
+      save_state "$name" "$transcript" "$to"; rm -f "$job" "$digest" "$FAILED/$name.json"; continue
     fi
 
     if ! curl -s -m 3 --noproxy 127.0.0.1 "http://127.0.0.1:$SP_PORT/health" | grep -q '"up"'; then
@@ -340,8 +343,19 @@ Finish with a 3-5 line summary of what you changed, then a last line that is exa
     kill "$wpid" 2>/dev/null
     cat "$out" >> "$LOG"
     [ "$rc" -eq 0 ] && ! tail -n 3 "$out" | grep -q 'SYNC_RESULT: done' && rc=99
+    # A Claude usage limit is not this session's fault, and every other pass would hit it
+    # too: count no attempt, keep the whole queue and stop until the next exit or sweep.
+    limit=$(grep -m1 -iE "hit your .*limit|usage limit" "$out")
+    if [ "$rc" -ne 0 ] && [ -n "$limit" ]; then
+      log "Claude usage limit reached ($limit); $(ls "$QUEUE" | wc -l | tr -d ' ') session(s) stay queued, no attempt counted"
+      if [ -z "$(find "$WORK/.notified-limit" -mmin -240 2>/dev/null)" ]; then
+        notify "Claude usage limit reached. Session work stays queued and syncs after it resets."; touch "$WORK/.notified-limit"
+      fi
+      return 0
+    fi
     if [ "$rc" -eq 0 ]; then
-      save_state "$name" "$transcript" "$to"; rm -f "$job"
+      # A copy set aside earlier (the exit hook can queue a set-aside session again) is stale now.
+      save_state "$name" "$transcript" "$to"; rm -f "$job" "$FAILED/$name.json"
       log "$name: sync finished"
     else
       attempts=$(( $(jq -r '.attempts // 0' "$job") + 1 ))

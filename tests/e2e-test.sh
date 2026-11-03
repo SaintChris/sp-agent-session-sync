@@ -3,7 +3,9 @@
 # Local REST API and a stand-in `claude` that makes one PATCH through sp-api. No real app,
 # no model call. Checks: the sweep queues a session, the sync pass gets a backup and the
 # task index, sp-api sends the token and the body, state is saved, a failed pass is
-# retried and then set aside, and a bad token stops the sync before any model call.
+# retried and then set aside (and the sweep leaves it there), a bad token stops the sync
+# before any model call, a Claude usage limit counts no attempt, and a successful sync
+# clears a stale set-aside copy.
 # Needs bash, jq, curl and python3.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd -P)
@@ -55,6 +57,7 @@ cat > "$tmp/bin/claude" <<'EOF'
 #!/bin/bash
 prompt="$2"
 [ -n "${FAKE_CLAUDE_FAIL:-}" ] && { echo "SYNC_RESULT: incomplete"; exit 0; }
+[ -n "${FAKE_CLAUDE_LIMIT:-}" ] && { echo "You've hit your 5-hour limit · resets 8:30am (America/Jamaica)"; exit 1; }
 backup=$(grep -o '[^ ]*-tasks-before\.json' <<<"$prompt" | head -1)
 jq -e '.ok' "$backup" >/dev/null || { echo "no backup"; exit 1; }
 bodies="$HOME/.local/state/sp-session-sync/bodies"
@@ -110,6 +113,8 @@ FAKE_CLAUDE_FAIL=1 bash "$repo/sp-session-sync.sh" --sweep
 expect "after one failure the session stays queued with 1 attempt" "$(jq -r .attempts "$state/queue/aaaaaaaa-0000-4000-8000-000000000001.json" 2>/dev/null)" "1"
 FAKE_CLAUDE_FAIL=1 bash "$repo/sp-session-sync.sh" --sweep
 expect "after the second failure it is set aside" "$(ls "$state/failed")" "aaaaaaaa-0000-4000-8000-000000000001.json"
+FAKE_CLAUDE_FAIL=1 bash "$repo/sp-session-sync.sh" --sweep
+expect "the sweep does not queue a set-aside session again" "$(ls "$state/queue" | wc -l | tr -d ' ')" "0"
 
 # 5. A wrong token: no sync pass at all, the session stays queued.
 mv "$state/failed/aaaaaaaa-0000-4000-8000-000000000001.json" "$state/queue/"
@@ -120,5 +125,19 @@ bash "$repo/sp-session-sync.sh" --sweep
 expect "a wrong token makes no write" "$(cat "$tmp/writes.log")" ""
 expect "and leaves the session queued" "$(ls "$state/queue")" "aaaaaaaa-0000-4000-8000-000000000001.json"
 expect "and says why in the log" "$(grep -c 'could not read tasks' "$HOME/.local/state/sp-session-sync-log/sync.log")" "1"
+
+# 6. A Claude usage limit: no attempt counted, the session stays queued, no failure.
+echo "test-token-123" > "$tmp/token"
+FAKE_CLAUDE_LIMIT=1 bash "$repo/sp-session-sync.sh" --sweep
+expect "a usage limit counts no attempt" "$(jq -r .attempts "$state/queue/aaaaaaaa-0000-4000-8000-000000000001.json" 2>/dev/null)" "0"
+expect "and nothing is set aside" "$(ls "$state/failed" | wc -l | tr -d ' ')" "0"
+expect "and the log says so" "$(grep -c 'Claude usage limit reached' "$HOME/.local/state/sp-session-sync-log/sync.log")" "1"
+
+# 7. A session queued again while a stale copy sits in failed/: syncing clears the copy.
+echo '{"stale":true}' > "$state/failed/aaaaaaaa-0000-4000-8000-000000000001.json"
+: > "$tmp/writes.log"
+bash "$repo/sp-session-sync.sh" --sweep
+expect "the queued session syncs" "$(grep -c "^PATCH" "$tmp/writes.log")" "1"
+expect "and its stale set-aside copy is removed" "$(ls "$state/failed" | wc -l | tr -d ' ')" "0"
 
 [ "$fail" -eq 0 ] && echo "all end-to-end tests passed" || { echo "--- log ---"; cat "$HOME/.local/state/sp-session-sync-log/sync.log"; exit 1; }
