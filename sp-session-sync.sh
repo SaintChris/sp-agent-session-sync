@@ -171,9 +171,9 @@ if [ "${1:-}" = "--sweep" ]; then
     local job cwd lines n sum; job=$(job_name "$1" "$2")
     # Already queued (for example by the exit hook, with its real end reason).
     [ -f "$QUEUE/$job.json" ] && return 0
-    # Set aside after repeated failures: only moving it back to the queue retries it, so a
+    # Set aside after repeated failures: left alone until the session has new work, so a
     # session that keeps failing doesn't cost a model run every 30 minutes.
-    [ -f "$FAILED/$job.json" ] && return 0
+    [ "$FAILED/$job.json" -nt "$3" ] && return 0
     # New lines, or the file was rewritten (fewer lines, or a different last synced line).
     lines=$(wc -l < "$3" | tr -d ' '); n=$(synced_lines "$job"); sum=$(synced_sum "$job")
     if [ "$lines" -eq "$n" ]; then
@@ -247,6 +247,7 @@ worker() {
   # Sessions that must wait (busy T3 database, failed pass) are deferred to the next run
   # so they never hold up the others.
   deferred=" "
+  queued() { local n=0 j; for j in "$QUEUE"/*.json; do [ -f "$j" ] && n=$((n + 1)); done; echo "$n"; }
   pending() { local j; for j in "$QUEUE"/*.json; do [ -f "$j" ] && [[ "$deferred" != *" $(basename "$j" .json) "* ]] && return 0; done; return 1; }
   while pending; do
   for job in "$QUEUE"/*.json; do
@@ -290,7 +291,7 @@ worker() {
     fi
 
     if ! curl -s -m 3 --noproxy 127.0.0.1 "http://127.0.0.1:$SP_PORT/health" | grep -q '"up"'; then
-      log "Super Productivity not running; $(ls "$QUEUE" | wc -l | tr -d ' ') session(s) stay queued for the next sweep or exit"
+      log "Super Productivity not running; $(queued) session(s) stay queued for the next sweep or exit"
       # Sweeps retry every 30 minutes; remind at most every 4 hours.
       if [ -z "$(find "$WORK/.notified-closed" -mmin -240 2>/dev/null)" ]; then
         notify "Super Productivity is closed. Session work is queued and syncs once it's open."; touch "$WORK/.notified-closed"
@@ -345,9 +346,16 @@ Finish with a 3-5 line summary of what you changed, then a last line that is exa
     [ "$rc" -eq 0 ] && ! tail -n 3 "$out" | grep -q 'SYNC_RESULT: done' && rc=99
     # A Claude usage limit is not this session's fault, and every other pass would hit it
     # too: count no attempt, keep the whole queue and stop until the next exit or sweep.
-    limit=$(grep -m1 -iE "hit your .*limit|usage limit" "$out")
-    if [ "$rc" -ne 0 ] && [ -n "$limit" ]; then
-      log "Claude usage limit reached ($limit); $(ls "$QUEUE" | wc -l | tr -d ' ') session(s) stay queued, no attempt counted"
+    # Only the CLI's own refusal counts: a failed exit (not 99, which is the model saying
+    # "incomplete") with a few lines of output, one of them starting with the limit message,
+    # so a model summary that mentions a limit can't stall the queue.
+    limit=
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 99 ] && [ "$(wc -l < "$out")" -le 5 ]; then
+      limit=$(grep -m1 -E "^(You've hit your .*limit|Claude AI usage limit reached)" "$out")
+    fi
+    if [ -n "$limit" ]; then
+      rm -f "$digest" "$backup" "$index" "$out"
+      log "Claude usage limit reached ($limit); $(queued) session(s) stay queued, no attempt counted"
       if [ -z "$(find "$WORK/.notified-limit" -mmin -240 2>/dev/null)" ]; then
         notify "Claude usage limit reached. Session work stays queued and syncs after it resets."; touch "$WORK/.notified-limit"
       fi
@@ -360,7 +368,8 @@ Finish with a 3-5 line summary of what you changed, then a last line that is exa
     else
       attempts=$(( $(jq -r '.attempts // 0' "$job") + 1 ))
       if [ "$attempts" -ge "$SYNC_MAX_ATTEMPTS" ]; then
-        mv "$job" "$FAILED/$name.json"
+        # Stored with a fresh count, so moving it back to the queue gives it full retries.
+        jq --argjson a "$attempts" '.attempts = 0 | .failed_attempts = $a' "$job" > "$FAILED/$name.json" && rm -f "$job"
         log "$name: sync FAILED (exit $rc; 99 = incomplete) $attempts times; set aside in $FAILED (move it back to $QUEUE to retry)"
         notify "A session failed to sync $attempts times and was set aside. See the sp-session-sync log."
       else
