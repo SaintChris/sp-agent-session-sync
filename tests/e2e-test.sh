@@ -139,7 +139,7 @@ expect "and the log says so" "$(grep -c 'Claude usage limit reached' "$HOME/.loc
 FAKE_CLAUDE_LIMIT=1 bash "$repo/sp-session-sync.sh" --sweep
 expect "a second limit pass still counts no attempt" "$(jq -r .attempts "$state/queue/aaaaaaaa-0000-4000-8000-000000000001.json" 2>/dev/null)" "0"
 expect "and notifies only once" "$(grep -c 'usage limit' "$tmp/notifications.log")" "1"
-expect "and leaves no digest or backup behind" "$(ls "$state/done" | grep -c -- '-7')" "0"
+expect "and leaves no digest or backup behind" "$(find "$state/done" -name '*-7[.-]*' | wc -l | tr -d ' ')" "0"
 
 # 7. A set-aside session with new work is queued again.
 jq '.attempts = 0' "$state/queue/aaaaaaaa-0000-4000-8000-000000000001.json" > "$state/failed/aaaaaaaa-0000-4000-8000-000000000001.json"
